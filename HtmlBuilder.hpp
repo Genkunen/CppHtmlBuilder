@@ -46,6 +46,7 @@ public:
     constexpr auto operator[](const char (&attr)[Attr_Size]) const {
         return SetAttr<Size + AdditionalSize, Attr_Size, Flags>{ m_data, attr };
     }
+    int test{};
 
 private:
     template<size_t Tag_Size, size_t Content_Size>
@@ -56,6 +57,7 @@ private:
     template<size_t Data_Size, size_t Attr_Size>
     constexpr explicit HtmlElement(const char (&data)[Data_Size], const char (&attr)[Attr_Size], std::true_type) {
         if constexpr (IsVoidTag) {
+            test = Size + AdditionalSize;
             size_t next{};
             size_t resume{};
             while (data[next] != '/') {
@@ -70,12 +72,36 @@ private:
                 m_data[next++] = data[resume++];
             }
         }
+        else {
+            test = Size + AdditionalSize;
+            size_t next{};
+            size_t resume{};
+            while (data[next] != '>') {
+                m_data[next] = data[next];
+                next++;
+            }
+            resume = next;
+            m_data[next++] = ' ';
+            for (size_t i = 0; i < Attr_Size - 1; ++i) {
+                m_data[next++] = attr[i];
+            }
+            while (data[resume]) {
+                m_data[next++] = data[resume++];
+            }
+        }
     }
 
     template<size_t Data_Size, size_t Attr_Size, uint8_t Flags_>
     struct SetAttr {
         constexpr explicit SetAttr(const char (&data)[Data_Size], const char (&attr)[Attr_Size])
           : m_data{ data }, m_attr{ attr } {}
+
+        ~SetAttr() = default;
+
+        constexpr SetAttr(const SetAttr&) = delete;
+        constexpr SetAttr(SetAttr&&) = delete;
+        auto operator=(const SetAttr&) -> SetAttr& = delete;
+        auto operator=(SetAttr&&) -> SetAttr& = delete;
 
         template<size_t Attr_Content_Size>
         constexpr auto operator()(const char (&attrContent)[Attr_Content_Size]) const {
@@ -88,6 +114,7 @@ private:
         }
 
     private:
+        // SetAttr is both non-copyable and non-movable, so cref data members are ok
         const char (&m_data)[Data_Size];
         const char (&m_attr)[Attr_Size];
     };
@@ -103,12 +130,6 @@ private:
           }(),
           ...);
     };
-
-    // template<size_t Html_Size, size_t Attr_Size>
-    // explicit HtmlElement(const char (&data)[Attr_Size], const char (&attr)[Html_Size], const size_t tagSize) {
-    //     //
-    // }
-
     char m_data[Size + AdditionalSize]{};
 };
 

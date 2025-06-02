@@ -21,16 +21,21 @@ enum HtmlElementFlags : uint8_t {
 template<size_t Size = 0, uint8_t Flags = 0>
 class HtmlElement {
 private:
-    static const bool IsVoidTag = static_cast<bool>(Flags & VOID_TAG);
-    static const bool HasAttrs = static_cast<bool>(Flags & ATTR_TAG);
+    static constexpr bool IsVoidTag = static_cast<bool>(Flags & VOID_TAG);
+    static constexpr bool HasAttrs = static_cast<bool>(Flags & ATTR_TAG);
     // HasAttrs ? additional space between tag name and attrs : no attrs
     // IsVoidTag counts in null terminator regardless of the result
-    static const size_t AdditionalSize = (IsVoidTag ? sizeof("< />") : sizeof("<></>")) + static_cast<int>(HasAttrs);
+    static constexpr size_t AdditionalSize = []() -> size_t {
+        if constexpr (HasAttrs) {
+            return static_cast<size_t>(!IsVoidTag);
+        }
+        return (IsVoidTag ? sizeof("< />") : sizeof("<></>"));
+    }();
     struct has_attr : std::bool_constant<HasAttrs> {};
 
 public:
     // Size + 1 -> adding back the missing null terminator from deduction guide
-    constexpr explicit HtmlElement(const char (&tag)[Size + 1U]) {
+    constexpr explicit HtmlElement(const char (&tag)[Size + 1U]) : test{ 100 + Flags } {
         copyInto(m_data, "<", tag, " />");
         //
     }
@@ -50,14 +55,19 @@ public:
 
 private:
     template<size_t Tag_Size, size_t Content_Size>
-    constexpr explicit HtmlElement(const char (&tag)[Tag_Size], const char (&content)[Content_Size], std::false_type) {
+    constexpr explicit HtmlElement(const char (&tag)[Tag_Size],
+      const char (&content)[Content_Size],
+      [[maybe_unused]] std::false_type _)
+      : test{ 200 + Flags } {
         copyInto(m_data, "<", tag, ">", content, "</", tag, ">");
     }
 
     template<size_t Data_Size, size_t Attr_Size>
-    constexpr explicit HtmlElement(const char (&data)[Data_Size], const char (&attr)[Attr_Size], std::true_type) {
+    constexpr explicit HtmlElement(const char (&data)[Data_Size],
+      const char (&attr)[Attr_Size],
+      [[maybe_unused]] std::true_type _)
+      : test{ 250 + Flags } {
         if constexpr (IsVoidTag) {
-            test = Size + AdditionalSize;
             size_t next{};
             size_t resume{};
             while (data[next] != '/') {
@@ -73,7 +83,6 @@ private:
             }
         }
         else {
-            test = Size + AdditionalSize;
             size_t next{};
             size_t resume{};
             while (data[next] != '>') {
@@ -108,6 +117,7 @@ private:
             // -2 for attrContent's null terminator and sizeof's null terminator
             char concat[Attr_Size + Attr_Content_Size + sizeof("=\"\"") - 2]{};
             copyInto(concat, m_attr, "=\"", attrContent, "\"");
+
             return HtmlElement<Data_Size + Attr_Size + Attr_Content_Size + sizeof("=\"\"") - 3, Flags_ | ATTR_TAG>{
                 m_data, concat
             };

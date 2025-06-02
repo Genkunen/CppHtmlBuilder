@@ -12,7 +12,7 @@ HtmlElement(
     "weirdtag", 
     "weird text"
   ) ["style"]("color: red;")
-);
+); // page.data() is of const char[65] type
 ```
 ```html
 <html>

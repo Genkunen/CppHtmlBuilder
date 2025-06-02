@@ -1,5 +1,6 @@
 #include <array>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 
@@ -31,42 +32,86 @@ private:
         }
         return (IsVoidTag ? sizeof("< />") : sizeof("<></>"));
     }();
+
     struct has_attr : std::bool_constant<HasAttrs> {};
 
 public:
+    static constexpr auto SIZE = Size + AdditionalSize;
+
     // Size + 1 -> adding back the missing null terminator from deduction guide
-    constexpr explicit HtmlElement(const char (&tag)[Size + 1U]) : test{ 100 + Flags } {
+    constexpr explicit HtmlElement(const char (&tag)[Size + 1U]) {
         copyInto(m_data, "<", tag, " />");
         //
     }
 
-    template<size_t Size1, size_t Size2>
-    constexpr explicit HtmlElement(const char (&str1)[Size1], const char (&str2)[Size2])
-      : HtmlElement(str1, str2, has_attr{}) {}
+    template<size_t Size1, size_t Size2, size_t... Sizes>
+    constexpr explicit HtmlElement(const char (&str1)[Size1], const char (&str2)[Size2], const char (&... more)[Sizes])
+      : HtmlElement(str1, str2, has_attr{}, more...) {}
 
-    [[nodiscard]] constexpr auto c_str() const noexcept { return m_data; }
-    [[nodiscard]] constexpr auto size() const noexcept(noexcept(std::size(m_data))) { return std::size(m_data); }
+    template<size_t Size1, size_t... Sizes, uint8_t... Flags_>
+    constexpr explicit HtmlElement(const char (&tag)[Size1], const HtmlElement<Sizes, Flags_>&... elements) {
+        copyInto(m_data, "<", tag, ">", elements.c_str()..., "</", tag, ">");
+    }
+
+    template<size_t Size1>
+    constexpr auto Unwind(const char (&&str)[Size1]) const -> const char (&)[Size1] {
+        return std::move(str);
+    }
+
+    template<size_t Size1, uint8_t Flags_>
+    constexpr auto Unwind(const HtmlElement<Size1, Flags_>& h) const -> const
+      char (&)[HtmlElement<Size1, Flags_>::SIZE] {
+        return h.data();
+    }
+
+    template<typename T, bool>
+    struct get_size : std::integral_constant<int, sizeof(T) - 1> {};
+    template<typename T>
+    struct get_size<T, false> : std::integral_constant<int, T::SIZE - 1> {};
+
+    template<size_t Content_Size, class... Elements>
+    constexpr auto operator()(const char (&content)[Content_Size], const Elements&... elements) const {
+        static_assert(Flags == VOID_TAG);
+        constexpr size_t TAG_SIZE = SIZE - sizeof("< />");
+        char tag[TAG_SIZE + 1]{};
+        for (size_t i = 0; i < TAG_SIZE; ++i) {
+            tag[i] = m_data[i + 1];
+        }
+        constexpr size_t ADDITIONAL =
+          ([&] { return get_size<Elements, std::is_array_v<Elements>>::value; }() + ... + 0);
+        return HtmlElement<((TAG_SIZE) * 2) + Content_Size - 1 + ADDITIONAL, 0>{
+            tag, content, Unwind(std::move(elements))...
+        };
+    }
+
+    // template<size_t Content_Size, class... Elements>
+    // constexpr auto operator()(const Elements&... elements) const {
+    //     return operator()("", elements...);
+    // }
 
     template<size_t Attr_Size>
     constexpr auto operator[](const char (&attr)[Attr_Size]) const {
         return SetAttr<Size + AdditionalSize, Attr_Size, Flags>{ m_data, attr };
     }
-    int test{};
+
+    [[nodiscard]] constexpr auto data() const noexcept -> const char (&)[Size + AdditionalSize] { return m_data; }
+    [[nodiscard]] constexpr auto size() const noexcept(noexcept(std::size(m_data))) -> size_t {
+        return std::size(m_data);
+    }
 
 private:
-    template<size_t Tag_Size, size_t Content_Size>
+    template<size_t Tag_Size, size_t Content_Size, size_t... Sizes>
     constexpr explicit HtmlElement(const char (&tag)[Tag_Size],
       const char (&content)[Content_Size],
-      [[maybe_unused]] std::false_type _)
-      : test{ 200 + Flags } {
-        copyInto(m_data, "<", tag, ">", content, "</", tag, ">");
+      [[maybe_unused]] std::false_type _,
+      const char (&... more)[Sizes]) {
+        copyInto(m_data, "<", tag, ">", content, more..., "</", tag, ">");
     }
 
     template<size_t Data_Size, size_t Attr_Size>
     constexpr explicit HtmlElement(const char (&data)[Data_Size],
       const char (&attr)[Attr_Size],
-      [[maybe_unused]] std::true_type _)
-      : test{ 250 + Flags } {
+      [[maybe_unused]] std::true_type _) {
         if constexpr (IsVoidTag) {
             size_t next{};
             size_t resume{};
@@ -130,7 +175,7 @@ private:
     };
 
     template<typename Dest, typename... Strs>
-    static constexpr void copyInto(Dest& dest, Strs&... strs) {
+    static constexpr void copyInto(Dest& dest, const Strs&... strs) {
         size_t next{};
         (
           [&] {
@@ -146,10 +191,13 @@ private:
 template<size_t Size>
 explicit HtmlElement(const char (&)[Size]) -> HtmlElement<Size - 1, VOID_TAG>;
 
-template<size_t Tag_Size, size_t Content_Size>
-explicit HtmlElement(const char (&)[Tag_Size],
-  const char (&)[Content_Size]) -> HtmlElement<((Tag_Size - 1) * 2) + Content_Size - 1>;
+template<size_t Tag_Size, size_t Content_Size, size_t... Sizes>
+explicit HtmlElement(const char (&)[Tag_Size], const char (&)[Content_Size], const char (&...)[Sizes])
+  -> HtmlElement<((Tag_Size - 1) * 2) + Content_Size - 1 + (Sizes + ... + 0) - sizeof...(Sizes)>;
 
+template<size_t Size1, size_t... Sizes, uint8_t... Flags_>
+HtmlElement(const char (&)[Size1], const HtmlElement<Sizes, Flags_>&...)
+  -> HtmlElement<((Size1 - 1) * 2) + (HtmlElement<Sizes - 1, Flags_>::SIZE + ... + 0)>;
 template<>
 class HtmlElement<0, 0> {
 public:

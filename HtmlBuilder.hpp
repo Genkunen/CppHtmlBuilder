@@ -3,10 +3,10 @@
 #include <type_traits>
 #include <utility>
 
-
 template<typename T, typename = void>
 struct is_iterable : std::false_type {};
 
+// constexpr version
 template<typename T>
 struct is_iterable<T,
   std::void_t<decltype(begin(std::declval<T&>()) != end(std::declval<T&>()),
@@ -25,7 +25,6 @@ private:
     static constexpr bool IsVoidTag = static_cast<bool>(Flags & VOID_TAG);
     static constexpr bool HasAttrs = static_cast<bool>(Flags & ATTR_TAG);
     // HasAttrs ? additional space between tag name and attrs : no attrs
-    // IsVoidTag counts in null terminator regardless of the result
     static constexpr size_t AdditionalSize = []() -> size_t {
         if constexpr (HasAttrs) {
             return static_cast<size_t>(!IsVoidTag);
@@ -41,7 +40,6 @@ public:
     // Size + 1 -> adding back the missing null terminator from deduction guide
     constexpr explicit HtmlElement(const char (&tag)[Size + 1U]) {
         copyInto(m_data, "<", tag, " />");
-        //
     }
 
     template<size_t Size1, size_t Size2, size_t... Sizes>
@@ -50,18 +48,7 @@ public:
 
     template<size_t Size1, size_t... Sizes, uint8_t... Flags_>
     constexpr explicit HtmlElement(const char (&tag)[Size1], const HtmlElement<Sizes, Flags_>&... elements) {
-        copyInto(m_data, "<", tag, ">", elements.c_str()..., "</", tag, ">");
-    }
-
-    template<size_t Size1>
-    constexpr auto Unwind(const char (&&str)[Size1]) const -> const char (&)[Size1] {
-        return std::move(str);
-    }
-
-    template<size_t Size1, uint8_t Flags_>
-    constexpr auto Unwind(const HtmlElement<Size1, Flags_>& h) const -> const
-      char (&)[HtmlElement<Size1, Flags_>::SIZE] {
-        return h.data();
+        copyInto(m_data, "<", tag, ">", elements.data()..., "</", tag, ">");
     }
 
     template<typename T, bool>
@@ -84,10 +71,10 @@ public:
         };
     }
 
-    // template<size_t Content_Size, class... Elements>
-    // constexpr auto operator()(const Elements&... elements) const {
-    //     return operator()("", elements...);
-    // }
+    template<class... Elements>
+    constexpr auto operator()(const Elements&... elements) const {
+        return operator()("", elements...);
+    }
 
     template<size_t Attr_Size>
     constexpr auto operator[](const char (&attr)[Attr_Size]) const {
@@ -100,6 +87,17 @@ public:
     }
 
 private:
+    template<size_t Size1>
+    constexpr auto Unwind(const char (&&str)[Size1]) const -> const char (&)[Size1] {
+        return std::move(str);
+    }
+
+    template<size_t Size1, uint8_t Flags_>
+    constexpr auto Unwind(const HtmlElement<Size1, Flags_>& h) const -> const
+      char (&)[HtmlElement<Size1, Flags_>::SIZE] {
+        return h.data();
+    }
+
     template<size_t Tag_Size, size_t Content_Size, size_t... Sizes>
     constexpr explicit HtmlElement(const char (&tag)[Tag_Size],
       const char (&content)[Content_Size],
@@ -186,6 +184,10 @@ private:
           ...);
     };
     char m_data[Size + AdditionalSize]{};
+
+    template<size_t Size1, uint8_t Flags_>
+    friend constexpr auto Unwind(const HtmlElement<Size1, Flags_>& h) -> const
+      char (&)[HtmlElement<Size1, Flags_>::SIZE];
 };
 
 template<size_t Size>
@@ -198,6 +200,8 @@ explicit HtmlElement(const char (&)[Tag_Size], const char (&)[Content_Size], con
 template<size_t Size1, size_t... Sizes, uint8_t... Flags_>
 HtmlElement(const char (&)[Size1], const HtmlElement<Sizes, Flags_>&...)
   -> HtmlElement<((Size1 - 1) * 2) + (HtmlElement<Sizes - 1, Flags_>::SIZE + ... + 0)>;
+
+// run-time version
 template<>
 class HtmlElement<0, 0> {
 public:
